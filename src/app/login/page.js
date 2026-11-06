@@ -19,7 +19,7 @@ export default function LoginPage() {
       await login(form.email, form.password);
       router.replace('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not reach the server. Please try again.');
+      setError(err.message || 'Could not reach the server. Please try again.');
     } finally {
       setSubmitting(false);
     }

@@ -16,7 +16,6 @@ export class ApiError extends Error {
   }
 }
 
-// খালি মান বাদ দিয়ে query string বানায়
 export function qs(params = {}) {
   const sp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -39,7 +38,7 @@ async function request(path, { method = 'GET', body } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new ApiError('সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না। একটু পরে আবার চেষ্টা করো।', 0);
+    throw new ApiError('Cannot connect to the server. Please try again later.', 0);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -47,7 +46,7 @@ async function request(path, { method = 'GET', body } = {}) {
       setToken(null);
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('dt:unauthorized'));
     }
-    throw new ApiError(data.message || 'কিছু একটা ভুল হয়েছে', res.status, data.errors);
+    throw new ApiError(data.message || 'Something wrong!', res.status, data.errors);
   }
   return data;
 }

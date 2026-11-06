@@ -1,34 +1,33 @@
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
-import api from '@/lib/api';
+import { api, getToken, setToken } from '@/lib/api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(getToken()));
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     if (!token) {
-      setLoading(false);
       return;
     }
     api
       .get('/auth/me')
-      .then((res) => setUser(res.data.user))
-      .catch(() => localStorage.removeItem('token'))
+      .then((res) => setUser(res.user))
+      .catch(() => setToken(null))
       .finally(() => setLoading(false));
   }, []);
 
   const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
-    localStorage.setItem('token', data.token);
+    const data = await api.post('/auth/login', { email, password });
+    setToken(data.token);
     setUser(data.user);
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    setToken(null);
     setUser(null);
   };
 
