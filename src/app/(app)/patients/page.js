@@ -1,143 +1,207 @@
 'use client';
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { Search, Pencil, Trash2 } from 'lucide-react';
-import { api } from '@/lib/api';
-import { useList } from '@/lib/useList';
-import { useToast } from '@/components/Toast';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { Search, Pencil, Trash2, FilterX } from 'lucide-react';
+import api from '@/lib/api';
+import useDebounce from '@/hooks/useDebounce';
+import Modal from '@/components/Modal';
+import Pagination from '@/components/Pagination';
 import PatientForm from '@/components/PatientForm';
-import {
-  Button, Modal, ConfirmDialog, Pagination, Spinner, Empty, ErrorBox, PageHeader, inputCls, useDebounce, fmtDate,
-} from '@/components/ui';
+import { inputClass, btnGhost, errMsg } from '@/lib/ui';
 
-const EMPTY = { search: '', condition: '', doctor: '', gender: '', from: '', to: '', sort: 'newest' };
+const emptyFilters = { search: '', condition: '', from: '', to: '' };
 
 export default function PatientsPage() {
-  const toast = useToast();
-  const [f, setF] = useState(EMPTY);
+  const qc = useQueryClient();
+  const [filters, setFilters] = useState(emptyFilters);
   const [page, setPage] = useState(1);
-  const [conditions, setConditions] = useState([]);
-  const [doctors, setDoctors] = useState([]);
-  const [edit, setEdit] = useState(null);
-  const [del, setDel] = useState(null);
-  const [delBusy, setDelBusy] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const search = useDebounce(filters.search);
 
-  const search = useDebounce(f.search);
-  const { data, pagination, loading, error, reload } = useList('/patients', { ...f, search, page, limit: 10 });
+  const updateFilter = (patch) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1);
+  };
+  const hasFilters = Object.values(filters).some(Boolean);
 
-  const loadConditions = () => api.get('/patients/filters').then((r) => setConditions(r.data.conditions)).catch(() => {});
-  useEffect(() => {
-    loadConditions();
-    api.get('/doctors?limit=50&sort=name').then((r) => setDoctors(r.data)).catch(() => {});
-  }, []);
+  const params = {
+    page,
+    limit: 10,
+    search: search || undefined,
+    condition: filters.condition || undefined,
+    from: filters.from || undefined,
+    to: filters.to || undefined,
+  };
 
-  const change = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setPage(1); };
+  const { data, isLoading, isError, error, isFetching } = useQuery({
+    queryKey: ['patients', params],
+    queryFn: async () => (await api.get('/patients', { params })).data,
+    placeholderData: keepPreviousData,
+  });
 
-  async function save(body) {
-    await api.put(`/patients/${edit._id}`, body);
-    toast('Patient updated');
-    setEdit(null); reload(); loadConditions();
-  }
+  const { data: conditions = [] } = useQuery({
+    queryKey: ['conditions'],
+    queryFn: async () => (await api.get('/patients/conditions')).data,
+  });
 
-  async function remove() {
-    setDelBusy(true);
-    try {
-      await api.del(`/patients/${del._id}`);
-      toast('Patient deleted');
-      setDel(null);
-      if (data.length === 1 && page > 1) setPage(page - 1); else reload();
-    } catch (e) { toast(e.message, 'error'); }
-    finally { setDelBusy(false); }
-  }
+  const refresh = () => {
+    ['patients', 'conditions', 'doctor-patients', 'dashboard'].forEach((k) =>
+      qc.invalidateQueries({ queryKey: [k] })
+    );
+  };
 
-  const DoctorLink = ({ p }) =>
-    p.doctor ? <Link href={`/doctors/${p.doctor._id}`} className="text-teal-700 hover:underline">{p.doctor.name}</Link> : <span className="text-slate-400">—</span>;
+  const updateMutation = useMutation({
+    mutationFn: ({ id, values }) => api.put(`/patients/${id}`, values),
+    onSuccess: () => {
+      refresh();
+      setEditing(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => api.delete(`/patients/${id}`),
+    onSuccess: () => {
+      if (data?.data.length === 1 && page > 1) setPage(page - 1);
+      refresh();
+    },
+  });
+
+  const patients = data?.data || [];
 
   return (
-    <>
-      <PageHeader title="Patients" subtitle="All patients across doctors (add patients from a doctor's page)" />
-
-      <div className="mb-4 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="relative sm:col-span-2">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input aria-label="Search" placeholder="Search name, phone, condition…" className={inputCls + ' pl-9'} value={f.search} onChange={change('search')} />
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Patients</h1>
+          <p className="text-sm text-slate-500">All patients across doctors</p>
         </div>
-        <select aria-label="Condition" className={inputCls} value={f.condition} onChange={change('condition')}>
-          <option value="">All conditions</option>
-          {conditions.map((c) => <option key={c}>{c}</option>)}
-        </select>
-        <select aria-label="Doctor" className={inputCls} value={f.doctor} onChange={change('doctor')}>
-          <option value="">All doctors</option>
-          {doctors.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
-        </select>
-        <select aria-label="Gender" className={inputCls} value={f.gender} onChange={change('gender')}>
-          <option value="">Any gender</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
-        </select>
-        <label className="text-xs text-slate-500">Added from<input type="date" className={inputCls} value={f.from} onChange={change('from')} /></label>
-        <label className="text-xs text-slate-500">Added to<input type="date" className={inputCls} value={f.to} onChange={change('to')} /></label>
-        <label className="text-xs text-slate-500">Sort
-          <select className={inputCls} value={f.sort} onChange={change('sort')}>
-            <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option>
-          </select>
-        </label>
-        <div className="flex items-end sm:col-span-2 lg:col-span-4 lg:justify-end">
-          <Button variant="secondary" onClick={() => { setF(EMPTY); setPage(1); }}>Reset filters</Button>
-        </div>
+        {hasFilters && (
+          <button
+            className={btnGhost}
+            onClick={() => {
+              setFilters(emptyFilters);
+              setPage(1);
+            }}
+          >
+            <FilterX size={14} className="mr-1 inline" /> Clear filters
+          </button>
+        )}
       </div>
 
-      {error && <ErrorBox message={error} onRetry={reload} />}
-      {loading && !data.length && <div className="flex justify-center py-16"><Spinner className="h-8 w-8" /></div>}
-      {!loading && !error && !data.length && <Empty>No patients found</Empty>}
-
-      {data.length > 0 && (
-        <div className={loading ? 'opacity-60 transition' : 'transition'}>
-          <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white md:block">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Patient</th><th className="px-4 py-3">Age / Gender</th><th className="px-4 py-3">Condition</th><th className="px-4 py-3">Doctor</th><th className="px-4 py-3">Added</th><th className="px-4 py-3 text-right">Actions</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.map((p) => (
-                  <tr key={p._id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3"><p className="font-medium">{p.name}</p><p className="text-xs text-slate-500">{p.phone}</p></td>
-                    <td className="px-4 py-3 capitalize">{p.age} · {p.gender}</td>
-                    <td className="px-4 py-3">{p.condition}</td>
-                    <td className="px-4 py-3"><DoctorLink p={p} /></td>
-                    <td className="px-4 py-3 text-slate-500">{fmtDate(p.createdAt)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-1">
-                        <button aria-label="Edit" onClick={() => setEdit(p)} className="rounded p-2 text-slate-600 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
-                        <button aria-label="Delete" onClick={() => setDel(p)} className="rounded p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="space-y-3 md:hidden">
-            {data.map((p) => (
-              <div key={p._id} className="rounded-xl border border-slate-200 bg-white p-4">
-                <p className="font-medium">{p.name}</p>
-                <p className="text-sm capitalize text-slate-600">{p.age} · {p.gender} · {p.condition}</p>
-                <p className="text-sm text-slate-500">{p.phone}</p>
-                <p className="mt-1 text-sm">Doctor: <DoctorLink p={p} /></p>
-                <p className="text-xs text-slate-400">Added {fmtDate(p.createdAt)}</p>
-                <div className="mt-3 flex gap-2">
-                  <Button variant="secondary" className="flex-1" onClick={() => setEdit(p)}><Pencil className="h-4 w-4" /> Edit</Button>
-                  <Button variant="secondary" className="text-red-600" onClick={() => setDel(p)} aria-label="Delete"><Trash2 className="h-4 w-4" /></Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <Pagination pagination={pagination} onPage={setPage} />
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="relative lg:col-span-2">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className={`${inputClass} pl-9`}
+            placeholder="Search name or phone..."
+            value={filters.search}
+            onChange={(e) => updateFilter({ search: e.target.value })}
+          />
         </div>
+        <select
+          className={inputClass}
+          value={filters.condition}
+          onChange={(e) => updateFilter({ condition: e.target.value })}
+        >
+          <option value="">All conditions</option>
+          {conditions.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <input
+          type="date"
+          title="Added from"
+          className={inputClass}
+          value={filters.from}
+          onChange={(e) => updateFilter({ from: e.target.value })}
+        />
+        <input
+          type="date"
+          title="Added to"
+          className={inputClass}
+          value={filters.to}
+          onChange={(e) => updateFilter({ to: e.target.value })}
+        />
+      </div>
+
+      {isError && (
+        <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600">{errMsg(error)}</p>
       )}
 
-      <Modal open={!!edit} onClose={() => setEdit(null)} title="Edit patient">
-        {edit && <PatientForm initial={edit} doctors={doctors} onSubmit={save} onCancel={() => setEdit(null)} />}
+      <div className={`overflow-hidden rounded-2xl border border-slate-200 bg-white ${isFetching ? 'opacity-70' : ''}`}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Age</th>
+                <th className="px-4 py-3">Phone</th>
+                <th className="px-4 py-3">Condition</th>
+                <th className="px-4 py-3">Doctor</th>
+                <th className="px-4 py-3">Added</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {isLoading && (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">Loading patients...</td></tr>
+              )}
+              {!isLoading && patients.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No patients found.</td></tr>
+              )}
+              {patients.map((p) => (
+                <tr key={p._id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium text-slate-800">{p.name}</td>
+                  <td className="px-4 py-3">{p.age}</td>
+                  <td className="px-4 py-3">{p.phone}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                      {p.condition}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{p.doctor?.name || '-'}</td>
+                  <td className="px-4 py-3">{new Date(p.createdAt).toLocaleDateString('en-GB')}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          updateMutation.reset();
+                          setEditing(p);
+                        }}
+                        className="text-slate-500 hover:text-teal-700"
+                        aria-label="Edit patient"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={() => confirm(`Delete ${p.name}?`) && deleteMutation.mutate(p._id)}
+                        className="text-red-500 hover:text-red-700"
+                        aria-label="Delete patient"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Pagination pagination={data?.pagination} onPage={setPage} />
+      </div>
+
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="Edit patient">
+        {editing && (
+          <PatientForm
+            key={editing._id}
+            initial={editing}
+            onSubmit={(values) => updateMutation.mutate({ id: editing._id, values })}
+            submitting={updateMutation.isPending}
+            error={updateMutation.isError ? errMsg(updateMutation.error) : ''}
+            submitLabel="Save changes"
+          />
+        )}
       </Modal>
-      <ConfirmDialog open={!!del} loading={delBusy} onCancel={() => setDel(null)} onConfirm={remove} title="Delete patient?" message={`${del?.name} will be permanently deleted.`} />
-    </>
+    </div>
   );
 }
