@@ -45,7 +45,7 @@ export default function DashboardPage() {
   if (isError) {
     return (
       <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600">
-        {error.response?.data?.message || 'Failed to load dashboard data.'}
+        {error?.message || 'Failed to load dashboard data.'}
       </p>
     );
   }

@@ -57,3 +57,13 @@ export const api = {
   put: (p, body) => request(p, { method: 'PUT', body }),
   del: (p) => request(p, { method: 'DELETE' }),
 };
+
+// axios-style wrapper used by the data pages: returns { data } like axios does
+const http = {
+  get: async (p, { params } = {}) => ({ data: await request(`${p}${qs(params)}`) }),
+  post: async (p, body) => ({ data: await request(p, { method: 'POST', body }) }),
+  put: async (p, body) => ({ data: await request(p, { method: 'PUT', body }) }),
+  delete: async (p) => ({ data: await request(p, { method: 'DELETE' }) }),
+};
+
+export default http;

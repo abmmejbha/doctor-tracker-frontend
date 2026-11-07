@@ -5,4 +5,4 @@ export const btnPrimary =
 export const btnGhost =
   'rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-100';
 export const errMsg = (err) =>
-  err?.response?.data?.message || 'Something went wrong. Please try again.';
+  err?.message || 'Something went wrong. Please try again.';
